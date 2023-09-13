@@ -9,5 +9,7 @@ urlpatterns = [
     path('auth_token/', SetViews.as_view(), name='auth'),
     path('verify_email/<str:uidb64>/<str:token>/', EmailVerificationView.as_view({'get': 'verify_email'}), name='verify_email'),
     path('change-password/', Function_password.as_view({'post': 'change_password'}), name='change-password'),
+    path('reset-password/', Function_password.as_view({'post': 'reset_password'}), name='reset-password'),
+    path('link_resetpassword_email/<str:encryptemail>/', EmailVerificationView.as_view({'post': 'link_resetpassword_email'}), name='link_resetpassword_email'),
 ]
 

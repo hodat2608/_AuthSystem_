@@ -11,7 +11,7 @@ from rest_framework.decorators import api_view, authentication_classes, permissi
 from django.contrib.sites.shortcuts import get_current_site
 from django.core.mail import EmailMessage
 from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
-from .serializers import ChangePasswordSerializer,ResetPasswordEmailSerializer,ResetPasswordEmailConfirmOTPSerializer
+from .serializers import ChangePasswordSerializer,EmailResetPassword,ResetPassword
 from django.utils.encoding import force_bytes
 from django.template.loader import render_to_string
 from rest_framework.authtoken.models import Token
@@ -35,17 +35,32 @@ class Function_Email:
     def __init__(self):
         self.secret_key = os.urandom(32)
 
-    def Active_via_email(self,request,user,to_email):
-        subject = "Activate your user account."
-        message = render_to_string("static/verify_email.html", {
-            'user': user.username,
+    def encode_email(self,email):
+        hex_email = ""
+        for char in email:
+            hex_char = hex(ord(char))[2:]
+            hex_email += hex_char
+        return hex_email
+    
+    def decode_email(self,hex_email):
+        email = ""
+        hex_pairs = [hex_email[i:i+2] for i in range(0, len(hex_email), 2)]
+        for hex_pair in hex_pairs:
+            char = chr(int(hex_pair, 16))
+            email += char
+        return email
+
+    def resetpassword_via_Email(self,request,to_email):
+        subject = "Confirm to Reset Password"
+        message = message = render_to_string("static/reset_password.html", {
             'domain': get_current_site(request).domain,
-            'uid': urlsafe_base64_encode(force_bytes(user.pk)),
-            'token': account_activation_token.make_token(user),
-            "protocol": 'https' if request.is_secure() else 'http'
+            'encrypt_email': self.encode_email(to_email),
+            'protocol': 'https' if request.is_secure() else 'http'
         })
-        email_from = settings.EMAIL_HOST
-        send_mail(subject, message,email_from,[to_email])
+        encrypt_email = self.encode_email(to_email)
+        print(encrypt_email)
+        from_email = settings.EMAIL_HOST
+        send_mail(subject,message,from_email,[to_email])
 
     def Activate_Email(self,request, user, to_email):
         data = {}
@@ -135,6 +150,29 @@ class EmailVerificationView(viewsets.ViewSet):
             return Response({'message': 'Email verified successfully. You can now log in.'}, status=status.HTTP_200_OK)
         else:
             return Response({'message': 'Invalid email verification link.'}, status=status.HTTP_400_BAD_REQUEST)
+    
+    @action(detail=False, methods=['post']) 
+    def link_resetpassword_email(self, request, encryptemail):
+        serializer = ResetPassword(data=self.request.data)
+        if serializer.is_valid():
+            try:
+                decode_email = Function_Email()
+                email = decode_email.decode_email(encryptemail)
+                user = UserAccount.objects.get(email=email)
+            except (TypeError, ValueError, OverflowError, UserAccount.DoesNotExist):
+                user = None
+            new_password = serializer.validated_data.get('new_password')
+            re_new_password = serializer.validated_data.get('re_new_password')
+            if not re_new_password or not new_password:
+                return Response({'message': 'Vui lòng điền đầy đủ thông tin'}, status=status.HTTP_400_BAD_REQUEST)
+            if new_password != re_new_password:
+                return Response({'message': 'Mật khẩu xác nhận không khớp'}, status=status.HTTP_400_BAD_REQUEST)
+            user.set_password(new_password)
+            user.save()
+            update_session_auth_hash(self.request, user)
+            return Response({'message': 'Thay đổi mật khẩu thành công'}, status=status.HTTP_200_OK)
+        else:
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 class UserViewSet(viewsets.ViewSet):
     @action(detail=False, methods=['post'])
@@ -231,7 +269,29 @@ def change_password_api(request):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
 class Function_password(viewsets.ViewSet):
-    permission_classes = (IsAuthenticated,)
+    
+    @action(detail=False, methods=['post'])   
+    def reset_password(self,request):
+        serializer = EmailResetPassword(data=request.data)
+        data={}
+        if serializer.is_valid():
+            to_email =  serializer.validated_data.get('email')
+            if not to_email:
+                data['Response'] = 'You need Email to Reset password'
+            try:
+                function_email = Function_Email()
+                function_email.resetpassword_via_Email(request,to_email)
+                data['Response'] = "Succsesfully, please check email to reset password"
+                data['send_email'] = True
+            except Exception as e:
+                data['response_error'] = f'Error sending email: {str(e)}' 
+                data['send_email'] = False 
+        else:
+            data = serializer.errors
+            data['email_sent'] = False 
+        return Response(data, status=status.HTTP_400_BAD_REQUEST)
+    
+    # permission_classes = (IsAuthenticated)
     @action(detail=False, methods=['post'])
     def change_password(self, request):
         serializer = ChangePasswordSerializer(data=request.data)
@@ -252,24 +312,3 @@ class Function_password(viewsets.ViewSet):
             return Response({'message': 'Thay đổi mật khẩu thành công'}, status=status.HTTP_200_OK)
         else:
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-        
-    @action(detail=False, methods=['post'])   
-    def reset_password(self,request):
-        serializer = ResetPasswordEmailSerializer(data=request.data)
-        data={}
-        if serializer.is_valid():
-            email =  serializer.validated_data.get('email')
-            if not email:
-                data['Response'] = 'You need Email to Reset password'
-            try:
-                function_email = Function_Email()
-                function_email.Activate_Email_by_OTP(request,email)
-                data['Response'] = "Succsesfully send otp to your email"
-                data['send_email'] = True
-            except Exception as e:
-                data['response_error'] = f'Error sending email: {str(e)}' 
-                data['send_email'] = False 
-        else:
-            data = serializer.errors
-            data['email_sent'] = False 
-        return Response(data, status=status.HTTP_400_BAD_REQUEST)
