@@ -39,10 +39,11 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'rest_framework',
     'corsheaders',
-    'accounts',
+    # 'accounts',
     'rest_framework.authtoken',
     'allauth',
     'allauth.account',
+    'accounts.apps.AccountsConfig', 
 ]
 
 MIDDLEWARE = [
@@ -154,6 +155,75 @@ AUTHENTICATION_BACKENDS = [
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST = 'smtp.gmail.com'
 EMAIL_PORT = 587
-EMAIL_HOST_USER = 'datthanhho2806@gmail.com'
-EMAIL_HOST_PASSWORD = 'wrwd wmzu ocgi nkjf'
+EMAIL_HOST_USER = 'thieunao2o@gmail.com'
+EMAIL_FROM  = 'thieunao2o@gmail.com'
+EMAIL_HOST_PASSWORD = 'uqkg vwow xpfv fldg'
 EMAIL_USE_TLS = True
+SESSION_COOKIE_AGE = 86400
+PASSWORD_RESET_TIMEOUT = 14400
+
+DJOSER = {
+    'LOGIN_FIELD': 'email',
+    'USER_CREATE_PASSWORD_RETYPE': True,
+    'USERNAME_CHANGED_EMAIL_CONFIRMATION': True,
+    'PASSWORD_CHANGED_EMAIL_CONFIRMATION': True,
+    'SEND_CONFIRMATION_EMAIL': True,
+    'SET_USERNAME_RETYPE': True,
+    'SET_PASSWORD_RETYPE': True,
+    'PASSWORD_RESET_CONFIRM_URL': 'password/reset/confirm/{uid}/{token}',
+    'USERNAME_RESET_CONFIRM_URL': 'email/reset/confirm/{uid}/{token}',
+    'ACTIVATION_URL': 'activate/{uid}/{token}',
+    'SEND_ACTIVATION_EMAIL': True,
+    'SOCIAL_AUTH_TOKEN_STRATEGY':'djoser.social.token.jwt.TokenStrategy',
+    'SOCIAL_AUTH_ALLOWED_REDIRECT_URIS': ['http://localhost:8000/google','http://localhost:8000/facebook'],
+    'SERIALIZERS': {
+        'user_create': 'accounts.serializers.UserCreateSerializer',
+        'user': 'accounts.serializers.UserCreateSerializer',
+        'current_user': 'accounts.serializers.UserCreateSerializer',
+        'user_delete': 'djoser.serializers.UserDeleteSerializer',
+    }
+}
+
+from django.apps import apps
+from django.conf import settings as django_settings
+from django.test.signals import setting_changed
+from django.utils.functional import LazyObject
+from django.utils.module_loading import import_string
+
+class ObjDict(dict):
+    def __getattribute__(self, item):
+        try:
+            val = self[item]
+            if isinstance(val, str):
+                val = import_string(val)
+            elif isinstance(val, (list, tuple)):
+                val = [import_string(v) if isinstance(v, str) else v for v in val]
+            self[item] = val
+        except KeyError:
+            val = super().__getattribute__(item)
+
+        return val
+    
+USER_ID_FIELD = "username"
+LOGIN_FIELD = "email"
+PASSWORD_CHANGED_EMAIL_CONFIRMATION = True
+LOGOUT_ON_PASSWORD_CHANGE = True
+CREATE_SESSION_ON_LOGIN = True
+SEND_ACTIVATION_EMAIL = True
+TOKEN_MODEL = "rest_framework.authtoken.models.Token"
+
+from accounts.constants import Messages as AccountMessages
+CONSTANTS = {
+    'messages': {
+        'INVALID_CREDENTIALS_ERROR': AccountMessages.INVALID_CREDENTIALS_ERROR,
+        'INACTIVE_ACCOUNT_ERROR': AccountMessages.INACTIVE_ACCOUNT_ERROR,
+        'INVALID_TOKEN_ERROR': AccountMessages.INVALID_TOKEN_ERROR,
+        'INVALID_UID_ERROR': AccountMessages.INVALID_UID_ERROR,
+        'STALE_TOKEN_ERROR': AccountMessages.STALE_TOKEN_ERROR,
+        'PASSWORD_MISMATCH_ERROR': AccountMessages.PASSWORD_MISMATCH_ERROR,
+        'USERNAME_MISMATCH_ERROR': AccountMessages.USERNAME_MISMATCH_ERROR,
+        'INVALID_PASSWORD_ERROR': AccountMessages.INVALID_PASSWORD_ERROR,
+        'EMAIL_NOT_FOUND': AccountMessages.EMAIL_NOT_FOUND,
+        'CANNOT_CREATE_USER_ERROR': AccountMessages.CANNOT_CREATE_USER_ERROR,
+    }
+}

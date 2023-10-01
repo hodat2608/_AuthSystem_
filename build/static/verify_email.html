@@ -3,5 +3,5 @@ Hi {{ user }},
 
 Please click on the link below to confirm your registration:
 
-{{ protocol }}://{{ domain }}{% url 'verify_email' uidb64=uid token=token %}
+{{ protocol }}://{{ domain }}{% url 'VerifyViaEmailViews' uidb64=uid token=token %}
 {% endautoescape %}
