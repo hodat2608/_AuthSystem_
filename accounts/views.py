@@ -33,7 +33,7 @@ import os
 from django.contrib.sessions.models import Session
 from djoser import signals, utils
 from django.contrib.auth import login, logout
-
+from accounts.combat import get_user_email
 class FunctionView():
 
     def __init__(self):
@@ -57,7 +57,7 @@ class FunctionView():
     def resetpassword_via_Email(self,request,to_email):
         subject = "Reset Password"
         try:
-            message = message = render_to_string("static/password_reset_email.html", {
+            message = render_to_string("static/password_reset_email.html", {
                 'domain': get_current_site(request).domain,
                 'encrypt_email': self.encode_email(to_email),
                 'protocol': 'https' if request.is_secure() else 'http'
@@ -166,6 +166,26 @@ class VerifyViaEmailViews(viewsets.ViewSet):
         return Response({'message': 'Thay đổi mật khẩu thành công'}, status=status.HTTP_200_OK)
 
 class UserViewSet(viewsets.ViewSet):
+
+    @action(detail=False, methods=['post'])
+    def perform_create(self, request):
+        serializer = UserSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = serializer.save()  
+        to = [get_user_email(user)]
+        signals.user_registered.send(
+            sender=self.__class__, user=user, request=self.request
+        )
+        if settings.SEND_ACTIVATION_EMAIL:
+            context = {"user": user}
+            if settings.EMAIL.activation(self.request, context).send(to):
+                return Response('send mail succces')
+            else: 
+                return Response('send mail fails')
+        elif settings.SEND_CONFIRMATION_EMAIL:
+            settings.EMAIL.confirmation(self.request, context).send(to)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+    
     @action(detail=False, methods=['post'])
     def signup(self, request):
         serializer = CreateAccountUser(data=request.data)
@@ -212,12 +232,14 @@ class UserViewSet(viewsets.ViewSet):
     def login(self, request):
         serializer = TokenCreateSerializer(data=request.data,context={"request": request})
         serializer.is_valid(raise_exception=True)
-        user = serializer.user
-        login(request,user)
-        token, _ = Token.objects.get_or_create(user=user)
+        token = utils.login_user(self.request, serializer.user)
+        token_serializer_class = settings.SERIALIZERS.token
+        
         if settings.CREATE_SESSION_ON_LOGIN:
             update_session_auth_hash(self.request, self.request.user)
-        return Response({'message':'login success' ,'token': token.key},status=status.HTTP_200_OK )
+        return Response(
+            data=token_serializer_class(token).data, status=status.HTTP_200_OK
+        )
     
     @action(detail=False, methods=['post'])
     def logout(self, request):

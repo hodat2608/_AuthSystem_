@@ -210,8 +210,15 @@ PASSWORD_CHANGED_EMAIL_CONFIRMATION = True
 LOGOUT_ON_PASSWORD_CHANGE = True
 CREATE_SESSION_ON_LOGIN = True
 SEND_ACTIVATION_EMAIL = True
+SEND_CONFIRMATION_EMAIL = True
 TOKEN_MODEL = "rest_framework.authtoken.models.Token"
-
+EMAIL = ObjDict({
+    'activation': 'accounts.email_backends.ActivationEmail',
+})
+SERIALIZERS = {
+    "token": "accounts.serializers.TokenSerializer",
+}
+ACTIVATION_URL = 'activate/{uid}/{token}'
 from accounts.constants import Messages as AccountMessages
 CONSTANTS = {
     'messages': {

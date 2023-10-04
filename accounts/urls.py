@@ -23,6 +23,7 @@ from rest_framework.routers import DefaultRouter
 urlpatterns = [
     path('signup_backup/', UserViewSet.as_view({'post': 'signup_backup'}), name='signup_backup'),
     path('signup/', UserViewSet.as_view({'post': 'signup'}), name='signup'),
+    path('perform_create/', UserViewSet.as_view({'post': 'perform_create'}), name='perform_create'),
     path('login/', UserViewSet.as_view({'post': 'login'}), name='login'),
     path('logout/', UserViewSet.as_view({'post': 'logout'}), name='logout'),
     path('auth_token/', SetViews.as_view(), name='auth'),

@@ -120,6 +120,14 @@ class TokenCreateSerializer(serializers.Serializer):
             return attrs
         self.fail("invalid_credentials")
 
+
+class TokenSerializer(serializers.ModelSerializer):
+    auth_token = serializers.CharField(source="key")
+
+    class Meta:
+        model = settings.TOKEN_MODEL
+        fields = ("auth_token",)
+
 class UidAndTokenSerializer(serializers.Serializer):
     uid = serializers.CharField()
     token = serializers.CharField()
