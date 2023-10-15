@@ -6,21 +6,21 @@ from django.contrib.auth.password_validation import validate_password
 from django.core import exceptions as django_exceptions
 from django.db import IntegrityError, transaction
 from rest_framework import serializers
+from rest_framework import exceptions, serializers
 from rest_framework.exceptions import ValidationError
 from rest_framework.settings import api_settings
 from django.conf import settings
 from accounts import utils
 from djoser.compat import get_user_email, get_user_email_field_name
 User = get_user_model()
+from rest_framework.authtoken.models import Token 
 
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = tuple(User.REQUIRED_FIELDS) + (
-            settings.USER_ID_FIELD,
-            settings.LOGIN_FIELD,
-        )
-        read_only_fields = (settings.LOGIN_FIELD,)
+        fields = ('id', 'email', 'username', 'password')
+        extra_kwargs = {'password': {'write_only': True}}
+        read_only_fields = ('email',)
 
     def update(self, instance, validated_data):
         email_field = get_user_email_field_name(User)
@@ -52,10 +52,23 @@ class UserCreateMixin:
 
 class UserCreateSerializer(UserCreateMixin, serializers.ModelSerializer):
     password = serializers.CharField(style={'input_type': 'password'}, write_only = True)
+    
+    default_error_messages = {
+        "cannot_create_user": settings.CONSTANTS['messages']['CANNOT_CREATE_USER_ERROR']
+    }
+
+    # class Meta:
+    #     model = User
+    #     fields = ('id', 'email', 'username', 'password')
+    #     extra_kwargs = {'password': {'write_only': True}}
+
     class Meta:
-        model = UserAccount
-        fields = ('id', 'email', 'username', 'password')
-        extra_kwargs = {'password': {'write_only': True}}
+        model = User
+        fields = tuple(User.REQUIRED_FIELDS) + (
+            settings.LOGIN_FIELD,
+            settings.USER_ID_FIELD,
+            "password",
+        )
         
     def validate(self, attrs):
 
@@ -125,7 +138,7 @@ class TokenSerializer(serializers.ModelSerializer):
     auth_token = serializers.CharField(source="key")
 
     class Meta:
-        model = settings.TOKEN_MODEL
+        model = Token
         fields = ("auth_token",)
 
 class UidAndTokenSerializer(serializers.Serializer):
@@ -149,7 +162,7 @@ class UidAndTokenSerializer(serializers.Serializer):
                 {"uid": [self.error_messages[key_error]]}, code=key_error
             )
 
-        is_token_valid = self.context["view"].account_activation_token.check_token(
+        is_token_valid = self.context["view"].token_generator.check_token(
             self.user, self.initial_data.get("token", "")
         )
         if is_token_valid:
@@ -159,76 +172,96 @@ class UidAndTokenSerializer(serializers.Serializer):
             raise ValidationError(
                 {"token": [self.error_messages[key_error]]}, code=key_error
             )
+        
+class ActivationSerializer(UidAndTokenSerializer):
+    
+    default_error_messages = {
+        "stale_token": settings.CONSTANTS['messages']['STALE_TOKEN_ERROR'],
+    }
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        if not self.user.is_active:
+            return attrs
+        raise exceptions.PermissionDenied(self.error_messages["stale_token"])
+
+class PasswordSerializer(serializers.Serializer):
+    new_password = serializers.CharField(style={"input_type": "password"})
+
+    def validate(self, attrs):
+        user = getattr(self, "user", None) or self.context["request"].user
+        # why assert? There are ValidationError / fail everywhere
+        assert user is not None
+
+        try:
+            validate_password(attrs["new_password"], user)
+        except django_exceptions.ValidationError as e:
+            raise serializers.ValidationError({"new_password": list(e.messages)})
+        return super().validate(attrs)
+
+
+class PasswordRetypeSerializer(PasswordSerializer):
+    re_new_password = serializers.CharField(style={"input_type": "password"})
+
+    default_error_messages = {
+        "password_mismatch": settings.CONSTANTS['messages']['PASSWORD_MISMATCH_ERROR'],
+    }
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        if attrs["new_password"] == attrs["re_new_password"]:
+            return attrs
+        else:
+            self.fail("password_mismatch")
+
 
 class CurrentPasswordSerializer(serializers.Serializer):
     current_password = serializers.CharField(style={"input_type": "password"})
+
+    default_error_messages = {
+        "invalid_password": settings.CONSTANTS['messages']['INVALID_PASSWORD_ERROR'],
+    }
 
     def validate_current_password(self, value):
         is_password_valid = self.context["request"].user.check_password(value)
         if is_password_valid:
             return value
         else:
-            raise serializers.ValidationError({"message": 'invalid_password'})
-        
-class PasswordSerializer(serializers.Serializer):
-    new_password = serializers.CharField(style={"input_type": "password"})
-    def validate(self, attrs):
-        user = getattr(self, "user", None) or self.context["request"].user
-        assert user is not None
+            self.fail("invalid_password")
 
+class UserFunctionsMixin:
+    def get_user(self, is_active=True):
         try:
-            validate_password(attrs["new_password"], user)
-        except django_exceptions.ValidationError as e:
-            raise serializers.ValidationError({"message": 'invalid_form_password'})
-        return super().validate(attrs)
+            user = User._default_manager.get(
+                is_active=is_active,
+                **{self.email_field: self.data.get(self.email_field, "")},
+            )
+            if user.has_usable_password():
+                return user
+        except User.DoesNotExist:
+            pass
+        if (
+            settings.PASSWORD_RESET_SHOW_EMAIL_NOT_FOUND
+            or settings.USERNAME_RESET_SHOW_EMAIL_NOT_FOUND
+        ):
+            self.fail("email_not_found")
 
-class PasswordRetypeSerializer(PasswordSerializer):
-    re_new_password = serializers.CharField(style={"input_type": "password"})
-    def validate(self, attrs):
 
-        attrs = super().validate(attrs)
-        if attrs["new_password"] == attrs["re_new_password"]:
-            return attrs
-        else:
-            raise serializers.ValidationError({"message": 'password_mismatch'})
+class SendEmailResetSerializer(serializers.Serializer, UserFunctionsMixin):
     
+    default_error_messages = {
+        "email_not_found": settings.CONSTANTS['messages']['EMAIL_NOT_FOUND'],
+    }
 
-class ResetPasswordEmailSerializer(serializers.Serializer):
-    new_password = serializers.CharField(required=True)
-    re_new_password = serializers.CharField(required=True)
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
 
-    def validate(self, attrs):
-        new_password = attrs.get('new_password')
-        re_new_password = attrs.get('re_new_password')
-        if not new_password or not re_new_password :
-            raise serializers.ValidationError({'message': 'Vui lòng điền đầy đủ thông tin'})
-        if new_password != re_new_password:
-            raise serializers.ValidationError({'message': 'Password and password confirmation do not match'})
-        return super().validate(attrs)
-    
-class Email_password(serializers.Serializer):
-    email = serializers.EmailField(required=True) 
+        self.email_field = get_user_email_field_name(User)
+        self.fields[self.email_field] = serializers.EmailField()
 
-    def validate(self, attrs):
-        email = attrs.get('email')
-        if not email:
-            raise serializers.ValidationError({'message': 'We need email???'})
-        if not UserAccount.objects.filter(email=email).exists:
-            raise serializers.ValidationError({'message': 'Email do not exists'})
-        return super().validate(attrs)
-    
-class ChangePasswordSerializer(PasswordRetypeSerializer,CurrentPasswordSerializer):
-    pass
 
 class CreateAccountUser(UserCreatePasswordRetypeSerializer):
     pass
 
-def create(self, validated_data):
-        user = UserAccount(
-            email=validated_data['email'],
-            username=validated_data['username'],
-        )
-        user.set_password(validated_data['password'])
-        user.save()
-        return user
+
     
